@@ -1,0 +1,10 @@
+pandas
+numpy
+scikit-learn
+catboost
+pytorch-tabnet
+torch
+matplotlib
+seaborn
+joblib
+git+https://github.com/KyungaSong/smogn.git@v0.1.0
