@@ -4,17 +4,16 @@ from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
 
 from src.config import RANDOM_STATE, TABNET_FIT_PARAMS, TABNET_PARAMS, TARGET_COLUMN
-from src.metrics import evaluate_regression
-from src.utils.saving import save_dataframe,save_json, save_metrics, save_model, save_pickle
+from src.metrics import (
+    build_prediction_result_df,
+    evaluate_regression,
+    print_regression_metrics,
+)
+from src.utils.preprocessing import clean_categorical_columns, get_categorical_columns
+from src.utils.saving import save_dataframe, save_json, save_metrics, save_model, save_pickle
 
 
 MODEL_NAME = "tabnet"
-
-
-def get_categorical_columns(X: pd.DataFrame) -> list[str]:
-    return X.select_dtypes(
-        include=["object", "string", "category"]
-    ).columns.tolist()
 
 
 def prepare_tabnet_data(
@@ -43,21 +42,9 @@ def prepare_tabnet_data(
         if column not in categorical_columns
     ]
 
-    for column in categorical_columns:
-        X_train[column] = X_train[column].where(
-            X_train[column].notna(),
-            "__missing__",
-        ).astype(str)
-
-        X_valid[column] = X_valid[column].where(
-            X_valid[column].notna(),
-            "__missing__",
-        ).astype(str)
-
-        X_test[column] = X_test[column].where(
-            X_test[column].notna(),
-            "__missing__",
-        ).astype(str)
+    X_train = clean_categorical_columns(X_train, categorical_columns)
+    X_valid = clean_categorical_columns(X_valid, categorical_columns)
+    X_test = clean_categorical_columns(X_test, categorical_columns)
 
     categorical_encoder = OrdinalEncoder(
         handle_unknown="use_encoded_value",
@@ -173,7 +160,7 @@ def train_tabnet(
         "model": MODEL_NAME,
         "augmentation": experiment["augmentation"],
         "model_params": model_params,
-        "fit_params": TABNET_FIT_PARAMS,
+        "fit_params": dict(TABNET_FIT_PARAMS),
         "categorical_columns": data["categorical_columns"],
         "numeric_columns": data["numeric_columns"],
         "feature_columns": data["feature_columns"],
@@ -198,16 +185,13 @@ def evaluate_and_save_tabnet(
     y_test = data["y_test"]
 
     metrics = evaluate_regression(y_test, y_pred)
+    print_regression_metrics(MODEL_NAME, metrics)
 
-    print(f"[{MODEL_NAME}] MAE  : {metrics['mae']:.4f}")
-    print(f"[{MODEL_NAME}] RMSE : {metrics['rmse']:.4f}")
-    print(f"[{MODEL_NAME}] R²   : {metrics['r2']:.4f}")
-
-    result_df = data["X_test_original"].copy()
-    result_df["actual"] = y_test
-    result_df["predicted"] = y_pred
-    result_df["residual"] = result_df["actual"] - result_df["predicted"]
-    result_df["abs_error"] = result_df["residual"].abs()
+    result_df = build_prediction_result_df(
+        X=data["X_test_original"],
+        y_true=y_test,
+        y_pred=y_pred,
+    )
 
     metrics_df = pd.DataFrame(
         [
@@ -243,6 +227,7 @@ def evaluate_and_save_tabnet(
     print(f"Saved model to: {model_path}.zip")
     print(f"Saved preprocessors to: {preprocessors_path}")
     print(f"Saved training info to: {training_info_path}")
+
 
 def run_tabnet(train_df, valid_df, test_df, experiment):
     data = prepare_tabnet_data(

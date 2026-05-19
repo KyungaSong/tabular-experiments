@@ -1,43 +1,16 @@
-import numpy as np
 import pandas as pd
 from catboost import CatBoostRegressor, Pool
 
-from src.config import RANDOM_STATE, TARGET_COLUMN, CATBOOST_PARAMS, CATBOOST_FIT_PARAMS
-from src.metrics import evaluate_regression
+from src.config import CATBOOST_FIT_PARAMS, CATBOOST_PARAMS, RANDOM_STATE, TARGET_COLUMN
+from src.metrics import (
+    build_prediction_result_df,
+    evaluate_regression,
+    print_regression_metrics,
+)
+from src.utils.preprocessing import clean_categorical_columns, get_categorical_columns
 from src.utils.saving import save_dataframe, save_metrics, save_json, save_model
 
 MODEL_NAME = "catboost"
-
-
-def get_categorical_columns(X: pd.DataFrame) -> list[str]:
-    return X.select_dtypes(
-        include=["object", "string", "category"]
-    ).columns.tolist()
-
-
-def clean_categorical_columns(
-    X: pd.DataFrame,
-    categorical_columns: list[str],
-) -> pd.DataFrame:
-    X = X.copy()
-
-    for column in categorical_columns:
-        X[column] = X[column].replace(
-            {
-                np.nan: "__missing__",
-                None: "__missing__",
-                pd.NA: "__missing__",
-            }
-        )
-
-        X[column] = X[column].astype(str)
-
-        X.loc[
-            X[column].isin(["nan", "None", "<NA>", "NaT"]),
-            column,
-        ] = "__missing__"
-
-    return X
 
 
 def validate_categorical_columns(
@@ -70,7 +43,7 @@ def train_catboost(
 ):
     X_train = train_df.drop(columns=TARGET_COLUMN).copy()
     y_train = train_df[TARGET_COLUMN]
-    
+
     X_valid = valid_df.drop(columns=TARGET_COLUMN).copy()
     y_valid = valid_df[TARGET_COLUMN]
 
@@ -100,7 +73,7 @@ def train_catboost(
     experiment_dir = experiment["experiment_dir"]
     train_dir = experiment_dir / "catboost_info"
     train_dir.mkdir(parents=True, exist_ok=True)
-    
+
     model_params = {
         **CATBOOST_PARAMS,
         "random_seed": RANDOM_STATE,
@@ -112,20 +85,18 @@ def train_catboost(
         "eval_set": valid_pool,
     }
 
-    model = CatBoostRegressor(
-        **model_params
-    )
+    model = CatBoostRegressor(**model_params)
 
     model.fit(
         train_pool,
-         **fit_params,
+        **fit_params,
     )
 
     training_info = {
         "model": MODEL_NAME,
         "augmentation": experiment["augmentation"],
         "model_params": model_params,
-        "fit_params": CATBOOST_FIT_PARAMS,
+        "fit_params": dict(CATBOOST_FIT_PARAMS),
         "categorical_columns": categorical_columns,
         "feature_columns": feature_columns,
     }
@@ -145,7 +116,9 @@ def evaluate_and_save_catboost(
     categorical_columns = training_info["categorical_columns"]
     feature_columns = training_info["feature_columns"]
 
-    X_test = X_test[feature_columns]    
+    X_test = X_test[feature_columns]
+    X_test_original = X_test.copy()
+
     X_test = clean_categorical_columns(
         X=X_test,
         categorical_columns=categorical_columns,
@@ -159,16 +132,13 @@ def evaluate_and_save_catboost(
     y_pred = model.predict(test_pool)
 
     metrics = evaluate_regression(y_test, y_pred)
+    print_regression_metrics(MODEL_NAME, metrics)
 
-    print(f"[{MODEL_NAME}] MAE  : {metrics['mae']:.4f}")
-    print(f"[{MODEL_NAME}] RMSE : {metrics['rmse']:.4f}")
-    print(f"[{MODEL_NAME}] R²   : {metrics['r2']:.4f}")
-
-    result_df = X_test.copy()
-    result_df["actual"] = y_test.to_numpy()
-    result_df["predicted"] = y_pred
-    result_df["residual"] = result_df["actual"] - result_df["predicted"]
-    result_df["abs_error"] = result_df["residual"].abs()
+    result_df = build_prediction_result_df(
+        X=X_test_original,
+        y_true=y_test.to_numpy(),
+        y_pred=y_pred,
+    )
 
     augmentation_name = experiment["augmentation"]
     metrics_df = pd.DataFrame(
@@ -197,6 +167,7 @@ def evaluate_and_save_catboost(
     print(f"Saved metrics to: {metrics_path}")
     print(f"Saved model to: {model_path}")
     print(f"Saved training info to: {training_info_path}")
+
 
 def run_catboost(train_df, valid_df, test_df, experiment):
     model, training_info = train_catboost(

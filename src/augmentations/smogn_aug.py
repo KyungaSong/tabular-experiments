@@ -9,20 +9,26 @@ AUGMENTATION_NAME = "smogn"
 
 def apply_smogn(
     train_df: pd.DataFrame,
+    target_column: str = TARGET_COLUMN,
+    smogn_params: dict | None = None,
 ) -> pd.DataFrame:
+    if target_column not in train_df.columns:
+        raise ValueError(f"Target column not found: {target_column}")
+
     train_df = train_df.copy().reset_index(drop=True)
+    smogn_params = dict(SMOGN_PARAMS if smogn_params is None else smogn_params)
 
     categorical_columns = train_df.select_dtypes(
         include=["object", "string", "category"]
-    ).columns
+    ).columns.tolist()
 
     for column in categorical_columns:
         train_df[column] = train_df[column].astype("object")
 
     augmented_train_df = smogn.smoter(
         data=train_df,
-        y=TARGET_COLUMN,
-        **SMOGN_PARAMS,
+        y=target_column,
+        **smogn_params,
     )
 
     print(f"Train original shape: {train_df.shape}")
@@ -34,5 +40,5 @@ def apply_smogn(
 def get_smogn_info() -> dict:
     return {
         "augmentation": AUGMENTATION_NAME,
-        "params": SMOGN_PARAMS,
+        "params": dict(SMOGN_PARAMS),
     }
